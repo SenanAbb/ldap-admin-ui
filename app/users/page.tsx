@@ -8,6 +8,7 @@ import { UserTable } from "@/components/admin/users/user-table"
 import { UserDialog } from "@/components/admin/users/user-dialog"
 import { PaginationBar } from "@/components/admin/users/pagination-bar"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import type { LDAPGroup, LDAPUser } from "@/lib/types"
 
@@ -41,6 +42,7 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(true)
   const [users, setUsers] = useState<LDAPUser[]>([])
   const [groups, setGroups] = useState<LDAPGroup[]>([])
+  const [kpis, setKpis] = useState<any | null>(null)
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
 
@@ -50,49 +52,45 @@ export default function UsersPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [usersRes, groupsRes] = await Promise.all([fetch("/api/users"), fetch("/api/ldap/groups")])
+      const [usersRes, groupsRes, kpisRes] = await Promise.all([
+        fetch("/api/users"),
+        fetch("/api/ldap/groups"),
+        fetch("/api/ldap/kpis"),
+      ])
       const usersJson = await usersRes.json()
       const groupsJson = await groupsRes.json()
+      const kpisJson = await kpisRes.json().catch(() => ({}))
 
       const apiUsers: UsersApiUser[] = usersJson.users || []
       const apiGroups: GroupsApiGroup[] = groupsJson.groups || []
 
-      const usersWithMemberOf: LDAPUser[] = await Promise.all(
-        apiUsers.map(async (u) => {
-          try {
-            const r = await fetch(`/api/users/${encodeURIComponent(u.uid)}`)
-            const j = await r.json()
-            const memberOf: string[] = j.groups || []
-            return {
-              dn: u.dn,
-              uid: u.uid,
-              cn: u.cn || u.uid,
-              sn: u.sn || "",
-              givenName: u.givenName || u.cn || "",
-              mail: u.mail,
-              dni: u.dni ?? (isDniNie(u.uid) ? u.uid : undefined),
-              memberOf,
-              enabled: true,
-              createdAt: undefined,
-              lastLogin: undefined,
-            }
-          } catch {
-            return {
-              dn: u.dn,
-              uid: u.uid,
-              cn: u.cn || u.uid,
-              sn: u.sn || "",
-              givenName: u.givenName || u.cn || "",
-              mail: u.mail,
-              dni: u.dni ?? (isDniNie(u.uid) ? u.uid : undefined),
-              memberOf: [],
-              enabled: true,
-              createdAt: undefined,
-              lastLogin: undefined,
-            }
-          }
-        }),
-      )
+      setKpis(kpisJson.kpis ?? null)
+
+      const memberOfByUid = new Map<string, string[]>()
+      for (const g of apiGroups) {
+        const groupDn = g.dn
+        for (const memberDn of g.members || []) {
+          const first = memberDn.split(",")[0] || ""
+          const uid = first.replace(/^uid=/i, "").trim()
+          if (!uid) continue
+          const prev = memberOfByUid.get(uid)
+          if (prev) prev.push(groupDn)
+          else memberOfByUid.set(uid, [groupDn])
+        }
+      }
+
+      const usersWithMemberOf: LDAPUser[] = apiUsers.map((u) => ({
+        dn: u.dn,
+        uid: u.uid,
+        cn: u.cn || u.uid,
+        sn: u.sn || "",
+        givenName: u.givenName || "",
+        mail: u.mail,
+        memberOf: memberOfByUid.get(u.uid) || [],
+        enabled: true,
+        createdAt: undefined,
+        lastLogin: undefined,
+      }))
 
       setUsers(usersWithMemberOf)
       setGroups(
@@ -187,6 +185,22 @@ export default function UsersPage() {
           { method: "DELETE" },
         )
       }
+
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.uid === user.uid
+            ? {
+                ...u,
+                givenName: user.givenName,
+                sn: user.sn,
+                cn: user.cn,
+                mail: user.mail,
+                memberOf: user.memberOf,
+              }
+            : u,
+        ),
+      )
+      setEditingUser((prev) => (prev && prev.uid === user.uid ? { ...prev, memberOf: user.memberOf } : prev))
     } else {
       await fetch("/api/users", {
         method: "POST",
@@ -209,14 +223,41 @@ export default function UsersPage() {
           body: JSON.stringify({ groupCn: dnToCn(groupDn) }),
         })
       }
+
+      await loadData()
     }
 
     setDialogOpen(false)
-    await loadData()
   }
 
   if (loading) {
-    return <div className="flex-1 overflow-auto p-6">Cargando...</div>
+    return (
+      <div className="flex-1 overflow-auto p-6 space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <div className="h-4 w-32 rounded bg-muted animate-pulse" />
+              </CardHeader>
+              <CardContent>
+                <div className="h-8 w-20 rounded bg-muted animate-pulse" />
+                <div className="mt-2 h-3 w-40 rounded bg-muted animate-pulse" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="h-9 w-80 max-w-full rounded bg-muted animate-pulse" />
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="space-y-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-10 w-full rounded bg-muted animate-pulse" />
+            ))}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -232,6 +273,47 @@ export default function UsersPage() {
       </Header>
 
       <div className="flex-1 overflow-auto p-6 space-y-4">
+        {kpis && (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Usuarios totales</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-foreground">{kpis.totalUsers}</div>
+                <p className="mt-1 text-xs text-muted-foreground">Registrados en LDAP</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Usuarios con grupos</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-foreground">{kpis.usersWithGroups}</div>
+                <p className="mt-1 text-xs text-muted-foreground">Cobertura {kpis.coverage}%</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Usuarios sin grupos</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-foreground">{kpis.usersWithoutGroups}</div>
+                <p className="mt-1 text-xs text-muted-foreground">Pendientes de asignación</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Promedio grupos/usuario</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-3xl font-bold text-foreground">{kpis.avgGroupsPerUser}</div>
+                <p className="mt-1 text-xs text-muted-foreground">Distribución actual</p>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="relative max-w-md">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

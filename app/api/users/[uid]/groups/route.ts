@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthWithLdapFallback } from "@/lib/auth";
-import { addUserToGroup, removeUserFromGroup } from "@/lib/ldap";
+import { addUserToGroup, isLdapUnavailableError, removeUserFromGroup } from "@/lib/ldap";
 import { enqueueSyncFromGroupCn, markRangerUserForForceDelete } from "@/lib/sync-queue";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +23,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ uid
     await enqueueSyncFromGroupCn(groupCn);
     return NextResponse.json({ success: true });
   } catch (error: any) {
+    if (isLdapUnavailableError(error)) {
+      return NextResponse.json({ error: "ldap_unavailable" }, { status: 503 });
+    }
     const debugRuntime =
       typeof process !== "undefined" && (process as any)?.versions?.node ? "nodejs" : "edge";
     return NextResponse.json(
@@ -52,6 +55,9 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ u
     await enqueueSyncFromGroupCn(groupCn);
     return NextResponse.json({ success: true });
   } catch (error: any) {
+    if (isLdapUnavailableError(error)) {
+      return NextResponse.json({ error: "ldap_unavailable" }, { status: 503 });
+    }
     const debugRuntime =
       typeof process !== "undefined" && (process as any)?.versions?.node ? "nodejs" : "edge";
     return NextResponse.json(

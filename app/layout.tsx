@@ -1,11 +1,6 @@
+import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { headers } from "next/headers";
-
-export const metadata = {
-  title: "LDAP Admin",
-  description:
-    "Administra usuarios y grupos LDAP con acceso seguro al Hub",
-};
 
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
@@ -14,6 +9,16 @@ import { checkLdapConnectionCached, ldapConfig } from "@/lib/ldap";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowLeft, ShieldX } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: {
+    default: "LDAP Admin",
+    template: "%s | LDAP Admin",
+  },
+  description: "Administra usuarios y grupos LDAP con acceso seguro al Hub",
+  applicationName: "LDAP Admin",
+  metadataBase: new URL("https://srv-enodl-des-03.larioja.org"),
+};
 
 const geist = Geist({ subsets: ["latin"] });
 

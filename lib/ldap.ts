@@ -16,6 +16,59 @@ const TAG_LDAP_USERS = "ldap-users";
 const TAG_LDAP_GROUPS = "ldap-groups";
 const TAG_LDAP_KPIS = "ldap-kpis";
 
+export class LdapUnavailableError extends Error {
+  code = "LDAP_UNAVAILABLE";
+  cause?: unknown;
+
+  constructor(cause?: unknown) {
+    super("LDAP unavailable");
+    this.name = "LdapUnavailableError";
+    this.cause = cause;
+  }
+}
+
+export const isLdapUnavailableError = (error: unknown): error is LdapUnavailableError => {
+  if (error instanceof LdapUnavailableError) return true;
+  const anyError = error as any;
+  return Boolean(anyError && typeof anyError === "object" && anyError.code === "LDAP_UNAVAILABLE");
+};
+
+const isLikelyLdapConnectivityError = (error: unknown): boolean => {
+  const anyError = error as any;
+  const code = String(anyError?.code ?? "");
+  const message = String(anyError?.message ?? anyError ?? "").toLowerCase();
+
+  if (
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "ETIMEDOUT" ||
+    code === "EAI_AGAIN" ||
+    code === "ENOTFOUND" ||
+    code === "ECONNABORTED" ||
+    code === "EHOSTUNREACH" ||
+    code === "ENETUNREACH"
+  ) {
+    return true;
+  }
+
+  if (
+    message.includes("econnrefused") ||
+    message.includes("socket hang up") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("unable to connect")
+  ) {
+    return true;
+  }
+
+  const errors = anyError?.errors;
+  if (Array.isArray(errors)) {
+    return errors.some((e) => isLikelyLdapConnectivityError(e));
+  }
+
+  return false;
+};
+
 function getClient() {
   const tlsOptions = LDAP_TLS_INSECURE
     ? { rejectUnauthorized: false }
@@ -31,6 +84,11 @@ async function withClient<T>(handler: (client: Client) => Promise<T>): Promise<T
   try {
     await client.bind(LDAP_BIND_DN, LDAP_BIND_PASSWORD);
     return await handler(client);
+  } catch (error) {
+    if (isLikelyLdapConnectivityError(error)) {
+      throw new LdapUnavailableError(error);
+    }
+    throw error;
   } finally {
     await client.unbind().catch(() => undefined);
   }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthWithLdapFallback } from "@/lib/auth";
-import { createUser, fetchUsers } from "@/lib/ldap";
+import { createUser, fetchUsers, isLdapUnavailableError } from "@/lib/ldap";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +16,9 @@ export async function GET(request: Request) {
     const users = await fetchUsers();
     return NextResponse.json({ users });
   } catch (error) {
+    if (isLdapUnavailableError(error)) {
+      return NextResponse.json({ error: "ldap_unavailable" }, { status: 503 });
+    }
     return NextResponse.json({ error: "Failed to fetch users" }, { status: 500 });
   }
 }
@@ -31,6 +34,9 @@ export async function POST(request: Request) {
     await createUser(body);
     return NextResponse.json({ success: true }, { status: 201 });
   } catch (error: any) {
+    if (isLdapUnavailableError(error)) {
+      return NextResponse.json({ error: "ldap_unavailable" }, { status: 503 });
+    }
     return NextResponse.json(
       { error: error.message || "Failed to create user" },
       { status: 500 },

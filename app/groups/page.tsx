@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Header } from "@/components/admin/header"
 import { GroupCard } from "@/components/admin/groups/group-card"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { LayoutGrid, List } from "lucide-react"
 import type { LDAPGroup, LDAPUser } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -28,6 +29,7 @@ export default function GroupsPage() {
   const [loading, setLoading] = useState(true)
   const [users, setUsers] = useState<LDAPUser[]>([])
   const [groups, setGroups] = useState<LDAPGroup[]>([])
+  const [kpis, setKpis] = useState<any | null>(null)
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [serviceFilter, setServiceFilter] = useState<
     "all" | "ambari" | "ranger" | "hue" | "zeppelin" | "grafana" | "openmd" | "airflow" | "other"
@@ -72,12 +74,19 @@ export default function GroupsPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [usersRes, groupsRes] = await Promise.all([fetch("/api/users"), fetch("/api/ldap/groups")])
+      const [usersRes, groupsRes, kpisRes] = await Promise.all([
+        fetch("/api/users"),
+        fetch("/api/ldap/groups"),
+        fetch("/api/ldap/kpis"),
+      ])
       const usersJson = await usersRes.json()
       const groupsJson = await groupsRes.json()
+      const kpisJson = await kpisRes.json().catch(() => ({}))
 
       const apiUsers: UsersApiUser[] = usersJson.users || []
       const apiGroups: GroupsApiGroup[] = groupsJson.groups || []
+
+      setKpis(kpisJson.kpis ?? null)
 
       const mappedUsers: LDAPUser[] = apiUsers.map((u) => ({
         dn: u.dn,
@@ -144,77 +153,46 @@ export default function GroupsPage() {
   }, [filteredGroups])
 
   if (loading) {
-    return <div className="flex-1 overflow-auto p-6">Cargando...</div>
+    return (
+      <div className="flex-1 overflow-auto p-6 space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <div className="h-4 w-32 rounded bg-muted animate-pulse" />
+              </CardHeader>
+              <CardContent>
+                <div className="h-8 w-20 rounded bg-muted animate-pulse" />
+                <div className="mt-2 h-3 w-40 rounded bg-muted animate-pulse" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="h-9 w-[640px] max-w-full rounded bg-muted animate-pulse" />
+        </div>
+        <div className="space-y-6">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="space-y-3">
+              <div className="flex items-baseline justify-between">
+                <div className="h-4 w-28 rounded bg-muted animate-pulse" />
+                <div className="h-3 w-10 rounded bg-muted animate-pulse" />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 3 }).map((__, j) => (
+                  <div key={j} className="h-28 rounded-xl border border-border bg-card animate-pulse" />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
   }
 
   return (
     <>
       <Header title="Gestión de Grupos" description="Administra los grupos y permisos del directorio LDAP">
-        <div className="flex items-center gap-2">
-          <Button
-            variant={serviceFilter === "all" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("all")}
-          >
-            Todos
-          </Button>
-          <Button
-            variant={serviceFilter === "ambari" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("ambari")}
-          >
-            Ambari
-          </Button>
-          <Button
-            variant={serviceFilter === "ranger" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("ranger")}
-          >
-            Ranger
-          </Button>
-          <Button
-            variant={serviceFilter === "hue" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("hue")}
-          >
-            Hue
-          </Button>
-          <Button
-            variant={serviceFilter === "zeppelin" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("zeppelin")}
-          >
-            Zeppelin
-          </Button>
-          <Button
-            variant={serviceFilter === "grafana" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("grafana")}
-          >
-            Grafana
-          </Button>
-          <Button
-            variant={serviceFilter === "openmd" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("openmd")}
-          >
-            OpenMD
-          </Button>
-          <Button
-            variant={serviceFilter === "airflow" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("airflow")}
-          >
-            Airflow
-          </Button>
-          <Button
-            variant={serviceFilter === "other" ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setServiceFilter("other")}
-          >
-            Otros
-          </Button>
-        </div>
         <div className="flex items-center rounded-lg border border-border p-1">
           <Button
             variant="ghost"
@@ -239,23 +217,95 @@ export default function GroupsPage() {
 
       <div className="flex-1 overflow-auto p-6">
         <div className="space-y-8">
-          {serviceOrder.map((svc) => {
-            const svcGroups = groupedGroups[svc]
-            if (svcGroups.length === 0) return null
-            return (
-              <section key={svc} className="space-y-3">
-                <div className="flex items-baseline justify-between">
-                  <h2 className="text-sm font-semibold text-foreground">{serviceLabel[svc]}</h2>
-                  <span className="text-xs text-muted-foreground">{svcGroups.length}</span>
-                </div>
-                <div className={layoutClassName}>
-                  {svcGroups.map((group) => (
-                    <GroupCard key={group.cn} group={group} users={users} viewMode={viewMode} />
-                  ))}
-                </div>
-              </section>
-            )
-          })}
+          {kpis && (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Grupos totales</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-foreground">{kpis.totalGroups}</div>
+                  <p className="mt-1 text-xs text-muted-foreground">Incluye todas las tipologías</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Grupos vacíos</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-foreground">{kpis.emptyGroups}</div>
+                  <p className="mt-1 text-xs text-muted-foreground">Sin miembros asignados</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Miembros únicos</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-foreground">{kpis.uniqueMembers}</div>
+                  <p className="mt-1 text-xs text-muted-foreground">Usuarios con al menos un grupo</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Promedio grupos/usuario</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-foreground">{kpis.avgGroupsPerUser}</div>
+                  <p className="mt-1 text-xs text-muted-foreground">Distribución actual</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={serviceFilter === "all" ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => setServiceFilter("all")}
+              >
+                Todos
+              </Button>
+              {serviceOrder.map((svc) => (
+                <Button
+                  key={svc}
+                  variant={serviceFilter === svc ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => setServiceFilter(svc)}
+                >
+                  {serviceLabel[svc]}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {filteredGroups.length === 0 ? (
+            <div className="rounded-lg border border-border bg-card p-10 text-center">
+              <p className="text-sm font-medium text-foreground">No hay grupos para este filtro</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Prueba con otro servicio o vuelve a "Todos".
+              </p>
+            </div>
+          ) : (
+            serviceOrder.map((svc) => {
+              const svcGroups = groupedGroups[svc]
+              if (svcGroups.length === 0) return null
+              return (
+                <section key={svc} className="space-y-3">
+                  <div className="flex items-baseline justify-between">
+                    <h2 className="text-sm font-semibold text-foreground">{serviceLabel[svc]}</h2>
+                    <span className="text-xs text-muted-foreground">{svcGroups.length}</span>
+                  </div>
+                  <div className={layoutClassName}>
+                    {svcGroups.map((group) => (
+                      <GroupCard key={group.cn} group={group} users={users} viewMode={viewMode} />
+                    ))}
+                  </div>
+                </section>
+              )
+            })
+          )}
         </div>
       </div>
     </>

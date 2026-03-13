@@ -12,7 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { resolveAuthWithLdapFallback } from "@/lib/auth";
-import { fetchGroups, fetchKpis, fetchUsers } from "@/lib/ldap";
+import { fetchGroups, fetchKpis, fetchUsers, isLdapUnavailableError } from "@/lib/ldap";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,31 @@ const toUid = (dn: string) => {
 
 export default async function DashboardPage() {
   const auth = await resolveAuthWithLdapFallback(await headers());
-  const [users, groups, kpis] = await Promise.all([fetchUsers(), fetchGroups(), fetchKpis()]);
+  const { users, groups, kpis, ldapConnected } = await (async () => {
+    try {
+      const [users, groups, kpis] = await Promise.all([fetchUsers(), fetchGroups(), fetchKpis()]);
+      return { users, groups, kpis, ldapConnected: true as const };
+    } catch (error) {
+      if (isLdapUnavailableError(error)) {
+        return {
+          users: [],
+          groups: [],
+          kpis: {
+            totalUsers: 0,
+            totalGroups: 0,
+            usersWithGroups: 0,
+            usersWithoutGroups: 0,
+            emptyGroups: 0,
+            avgGroupsPerUser: 0,
+            uniqueMembers: 0,
+            coverage: 0,
+          },
+          ldapConnected: false as const,
+        };
+      }
+      throw error;
+    }
+  })();
   const {
     totalUsers,
     totalGroups,
@@ -94,10 +118,17 @@ export default async function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="gap-1.5 border-primary/30 bg-primary/5 text-primary">
-            <Shield className="h-3 w-3" />
-            LDAP conectado
-          </Badge>
+          {ldapConnected ? (
+            <Badge variant="outline" className="gap-1.5 border-primary/30 bg-primary/5 text-primary">
+              <Shield className="h-3 w-3" />
+              LDAP conectado
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="gap-1.5 border-destructive/30 bg-destructive/5 text-destructive">
+              <Shield className="h-3 w-3" />
+              LDAP desconectado
+            </Badge>
+          )}
           <Badge variant="outline" className="gap-1.5">
             <Activity className="h-3 w-3" />
             Actualizado {lastUpdated}

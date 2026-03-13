@@ -17,6 +17,7 @@ export const KEY_DIRTY_HUE = "sync:dirty:hue";
 export const KEY_DEBOUNCE_UNTIL = "sync:debounce:until";
 export const KEY_RANGER_FORCE_DELETE_USERS = "sync:ranger:force_delete_users";
 export const KEY_HUE_DIRTY_GROUPS = "sync:hue:groups";
+export const KEY_SYNC_STATUS = process.env.SYNC_KEY_STATUS ?? "sync:status";
 
 const REDIS_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -64,7 +65,7 @@ export function inferTargetsFromGroupCn(groupCn: string): SyncTarget[] {
 
   if (cn.startsWith("ambari_")) targets.add("ambari");
   if (cn.startsWith("ranger_")) targets.add("ranger");
-  if (cn.startsWith("hue_")) targets.add("hue");
+  if (cn === "hue_admin" || cn === "hue_user" || cn.startsWith("hue_")) targets.add("hue");
 
   return Array.from(targets);
 }
@@ -94,6 +95,16 @@ export async function enqueueSync(
   if (uniqueTargets.includes("hue")) {
     await client.set(KEY_DIRTY_HUE, "1");
   }
+
+  await client.set(
+    KEY_SYNC_STATUS,
+    JSON.stringify({
+      state: "queued",
+      requestedAt: now,
+      targets: uniqueTargets,
+      force,
+    }),
+  );
 
   if (force) {
     await client.set(KEY_DEBOUNCE_UNTIL, String(now));
@@ -141,7 +152,7 @@ export async function markHueGroupForSync(groupCn: string): Promise<{ marked: bo
 
 export async function enqueueSyncFromGroupCn(groupCn: string): Promise<{ enqueued: boolean }> {
   const cn = (groupCn ?? "").trim();
-  if (cn.startsWith("hue_")) {
+  if (cn === "hue_admin" || cn === "hue_user" || cn.startsWith("hue_")) {
     await markHueGroupForSync(cn);
   }
   return enqueueSync(inferTargetsFromGroupCn(cn));
@@ -152,7 +163,7 @@ export async function enqueueSyncFromGroupCnWithOptions(
   options?: { force?: boolean },
 ): Promise<{ enqueued: boolean }> {
   const cn = (groupCn ?? "").trim();
-  if (cn.startsWith("hue_")) {
+  if (cn === "hue_admin" || cn === "hue_user" || cn.startsWith("hue_")) {
     await markHueGroupForSync(cn);
   }
   return enqueueSync(inferTargetsFromGroupCn(cn), options);

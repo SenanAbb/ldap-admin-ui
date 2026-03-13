@@ -50,7 +50,14 @@ export const resolveAuthWithLdapFallback = async (headers: Headers): Promise<Aut
   const uidCandidate = isLikelyUid(emailHeader) ? emailHeader : isLikelyUid(userHeader) ? userHeader : undefined;
   if (!uidCandidate) return base;
 
-  const { isUserInGroup } = await import("@/lib/ldap");
-  const inGroup = await isUserInGroup(uidCandidate, REQUIRED_GROUP);
-  return { ...base, user: base.user ?? uidCandidate, isAuthorized: inGroup };
+  const { isLdapUnavailableError, isUserInGroup } = await import("@/lib/ldap");
+  try {
+    const inGroup = await isUserInGroup(uidCandidate, REQUIRED_GROUP);
+    return { ...base, user: base.user ?? uidCandidate, isAuthorized: inGroup };
+  } catch (error) {
+    if (isLdapUnavailableError(error)) {
+      return base;
+    }
+    throw error;
+  }
 };
