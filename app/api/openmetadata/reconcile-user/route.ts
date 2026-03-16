@@ -86,11 +86,41 @@ async function getUserByName(username: string): Promise<any> {
 }
 
 async function getRoleByName(roleName: string): Promise<any> {
-  const r = await omFetch(`/api/v1/roles/name/${encodeURIComponent(roleName)}`);
-  if (!r.ok) {
-    throw new Error(r.json?.message || `OpenMetadata: failed to read role ${roleName} (HTTP ${r.status})`);
+  const direct = await omFetch(`/api/v1/roles/name/${encodeURIComponent(roleName)}`);
+  if (direct.ok) return direct.json;
+
+  const adminAliases = [
+    "Admin",
+    "Organization Administrator",
+    "OrganizationAdmin",
+    "Administrator",
+  ];
+  const candidateNames =
+    roleName.toLowerCase() === "admin" ? adminAliases : [roleName];
+
+  const list = await omFetch(`/api/v1/roles?limit=1000`);
+  if (!list.ok) {
+    throw new Error(
+      direct.json?.message || `OpenMetadata: failed to read role ${roleName} (HTTP ${direct.status})`,
+    );
   }
-  return r.json;
+
+  const roles: any[] = Array.isArray(list.json?.data) ? list.json.data : [];
+  const normalize = (v: unknown) => String(v ?? "").trim().toLowerCase();
+
+  for (const candidate of candidateNames) {
+    const c = normalize(candidate);
+    const match = roles.find((r) => normalize(r?.name) === c || normalize(r?.displayName) === c);
+    if (match) return match;
+  }
+
+  const available = roles
+    .map((r) => String(r?.name ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  throw new Error(
+    `OpenMetadata: role instance for ${roleName} not found. Available roles (first 50): ${available.join(", ")}`,
+  );
 }
 
 function toEntityRef(entity: any) {
