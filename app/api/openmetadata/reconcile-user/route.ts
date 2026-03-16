@@ -31,7 +31,6 @@ function mapOpenmdGroupsToRoleNames(openmdGroupCns: string[]): string[] {
   const groups = new Set(openmdGroupCns.map((g) => (g ?? "").trim().toLowerCase()).filter(Boolean));
   const roleNames: string[] = [];
 
-  if (groups.has("openmd_admin")) roleNames.push("Admin");
   if (groups.has("openmd_data_steward")) roleNames.push("DataSteward");
   if (groups.has("openmd_data_consumer")) roleNames.push("DataConsumer");
 
@@ -155,7 +154,7 @@ export async function POST(request: Request) {
     }
 
     const desiredRoleNames = mapOpenmdGroupsToRoleNames(openmdGroupCns);
-    const shouldBeAdmin = desiredRoleNames.includes("Admin");
+    const shouldBeAdmin = openmdGroupCns.some((g) => g.trim().toLowerCase() === "openmd_admin");
 
     const user = await getUserByName(uid);
     const userId = user?.id;
