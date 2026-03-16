@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Plus, Search } from "lucide-react"
 
 import { Header } from "@/components/admin/header"
-import { UserTable } from "@/components/admin/users/user-table"
+import { SyncSidebarControls } from "@/components/admin/sync/sync-controls"
 import { UserDialog } from "@/components/admin/users/user-dialog"
 import { PaginationBar } from "@/components/admin/users/pagination-bar"
 import { Button } from "@/components/ui/button"
@@ -12,7 +12,79 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import type { LDAPGroup, LDAPUser } from "@/lib/types"
 
-const ITEMS_PER_PAGE = 10
+const ITEMS_PER_PAGE = 12
+
+type SyncStatusPayload = {
+  state: "queued" | "running" | "success" | "error"
+  cycleId?: number
+  startedAt?: number
+  finishedAt?: number | null
+  services?: Record<
+    string,
+    {
+      state?: "pending" | "running" | "success" | "error" | "skipped"
+      error?: { message?: string; stderr?: string; stdout?: string; code?: unknown }
+    }
+  >
+}
+
+async function fetchJsonWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit & { timeoutMs?: number } = {},
+): Promise<{ ok: boolean; status: number; json: any }> {
+  const controller = new AbortController()
+  const timeoutMs = init.timeoutMs ?? 15_000
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(input, { ...init, signal: controller.signal })
+    const json = await res.json().catch(() => ({}))
+    return { ok: res.ok, status: res.status, json }
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      return { ok: false, status: 0, json: { error: "timeout" } }
+    }
+    return { ok: false, status: 0, json: { error: err?.message || "network_error" } }
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
+function formatSyncStatusError(status: SyncStatusPayload | null): string {
+  const services = status?.services
+  if (!services) return "Sincronización con errores"
+  const parts: string[] = []
+  for (const [key, v] of Object.entries(services)) {
+    if (v?.state !== "error") continue
+    const msg = v?.error?.message || "Error desconocido"
+    parts.push(`${key}: ${msg}`)
+  }
+  return parts.length ? `Sincronización con errores (${parts.join(" | ")})` : "Sincronización con errores"
+}
+
+async function waitForSyncCompletion(options: { timeoutMs?: number; pollMs?: number } = {}) {
+  const timeoutMs = options.timeoutMs ?? 180_000
+  const pollMs = options.pollMs ?? 1_500
+  const start = Date.now()
+
+  while (Date.now() - start < timeoutMs) {
+    const r = await fetchJsonWithTimeout("/api/sync/status", { cache: "no-store", timeoutMs: 8_000 })
+    if (!r.ok) {
+      throw new Error(`SYNC: no se pudo leer el estado de sync (${r.json?.error || `HTTP ${r.status}`})`)
+    }
+    const status = (r.json?.status ?? null) as SyncStatusPayload | null
+    if (!status) {
+      await new Promise((resolve) => window.setTimeout(resolve, pollMs))
+      continue
+    }
+    if (status.state === "success") return
+    if (status.state === "error") {
+      throw new Error(`SYNC: ${formatSyncStatusError(status)}`)
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, pollMs))
+  }
+
+  throw new Error("SYNC: timeout esperando al worker de sincronización")
+}
 
 type UsersApiUser = {
   dn: string
@@ -158,11 +230,17 @@ export default function UsersPage() {
       if (user.mail) patch.mail = user.mail
       if (password) patch.password = password
 
-      await fetch(`/api/users/${encodeURIComponent(user.uid)}`, {
+      const patchRes = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(user.uid)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       })
+      if (!patchRes.ok) {
+        if (patchRes.status === 503 && patchRes.json?.error === "ldap_unavailable") {
+          throw new Error("LDAP: servicio no disponible")
+        }
+        throw new Error(patchRes.json?.error || `LDAP: HTTP ${patchRes.status}`)
+      }
 
       const prevGroups = new Set(editingUser.memberOf || [])
       const nextGroups = new Set(user.memberOf || [])
@@ -177,25 +255,43 @@ export default function UsersPage() {
       )
 
       for (const groupDn of add) {
-        await fetch(`/api/users/${encodeURIComponent(user.uid)}/groups?skipSync=1`, {
+        const r = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(user.uid)}/groups?skipSync=1`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ groupCn: dnToCn(groupDn) }),
         })
+        if (!r.ok) {
+          if (r.status === 503 && r.json?.error === "ldap_unavailable") {
+            throw new Error("LDAP: servicio no disponible")
+          }
+          throw new Error(r.json?.error || `LDAP: HTTP ${r.status}`)
+        }
       }
       for (const groupDn of remove) {
-        await fetch(
+        const r = await fetchJsonWithTimeout(
           `/api/users/${encodeURIComponent(user.uid)}/groups?groupCn=${encodeURIComponent(dnToCn(groupDn))}&skipSync=1`,
           { method: "DELETE" },
         )
+        if (!r.ok) {
+          if (r.status === 503 && r.json?.error === "ldap_unavailable") {
+            throw new Error("LDAP: servicio no disponible")
+          }
+          throw new Error(r.json?.error || `LDAP: HTTP ${r.status}`)
+        }
       }
 
       if (changedGroupCns.length) {
-        await fetch(`/api/sync`, {
+        const syncRes = await fetchJsonWithTimeout(`/api/sync`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ groupCns: changedGroupCns, force: true }),
         })
+        if (!syncRes.ok || !syncRes.json?.success) {
+          throw new Error(syncRes.json?.error ? `SYNC: ${syncRes.json.error}` : `SYNC: HTTP ${syncRes.status}`)
+        }
+        if (syncRes.json?.enqueued) {
+          await waitForSyncCompletion()
+        }
       }
 
       setUsers((prev) =>
@@ -214,7 +310,7 @@ export default function UsersPage() {
       )
       setEditingUser((prev) => (prev && prev.uid === user.uid ? { ...prev, memberOf: user.memberOf } : prev))
     } else {
-      await fetch("/api/users", {
+      const createRes = await fetchJsonWithTimeout("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -226,14 +322,41 @@ export default function UsersPage() {
           password: password || "",
         }),
       })
+      if (!createRes.ok) {
+        if (createRes.status === 503 && createRes.json?.error === "ldap_unavailable") {
+          throw new Error("LDAP: servicio no disponible")
+        }
+        throw new Error(createRes.json?.error || `LDAP: HTTP ${createRes.status}`)
+      }
 
       const dnToCn = (dn: string) => dn.split(",")[0].replace(/^cn=/, "")
+      const changedGroupCns = Array.from(new Set((user.memberOf || []).map((dn) => dnToCn(dn)).filter(Boolean)))
       for (const groupDn of user.memberOf || []) {
-        await fetch(`/api/users/${encodeURIComponent(user.uid)}/groups`, {
+        const r = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(user.uid)}/groups?skipSync=1`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ groupCn: dnToCn(groupDn) }),
         })
+        if (!r.ok) {
+          if (r.status === 503 && r.json?.error === "ldap_unavailable") {
+            throw new Error("LDAP: servicio no disponible")
+          }
+          throw new Error(r.json?.error || `LDAP: HTTP ${r.status}`)
+        }
+      }
+
+      if (changedGroupCns.length) {
+        const syncRes = await fetchJsonWithTimeout(`/api/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groupCns: changedGroupCns, force: true }),
+        })
+        if (!syncRes.ok || !syncRes.json?.success) {
+          throw new Error(syncRes.json?.error ? `SYNC: ${syncRes.json.error}` : `SYNC: HTTP ${syncRes.status}`)
+        }
+        if (syncRes.json?.enqueued) {
+          await waitForSyncCompletion()
+        }
       }
 
       await loadData()
