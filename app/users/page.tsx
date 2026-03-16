@@ -313,28 +313,27 @@ export default function UsersPage() {
         throw new Error(patchRes.json?.error || `LDAP: HTTP ${patchRes.status}`)
       }
 
-      const prevGroups = new Set(editingUser.memberOf || [])
-      const nextGroups = new Set(user.memberOf || [])
-
-      const add = [...nextGroups].filter((dn) => !prevGroups.has(dn))
-      const remove = [...prevGroups].filter((dn) => !nextGroups.has(dn))
-
       const dnToCn = (dn: string) => dn.split(",")[0].replace(/^cn=/, "")
+      const normalizeCn = (cn: string) => cn.trim().toLowerCase()
 
-      const changedGroupCns = Array.from(
-        new Set([...add, ...remove].map((dn) => dnToCn(dn)).filter(Boolean)),
-      )
+      const prevGroupCns = new Set((editingUser.memberOf || []).map((dn) => normalizeCn(dnToCn(dn))).filter(Boolean))
+      const nextGroupCns = new Set((user.memberOf || []).map((dn) => normalizeCn(dnToCn(dn))).filter(Boolean))
+
+      const add = [...nextGroupCns].filter((cn) => !prevGroupCns.has(cn))
+      const remove = [...prevGroupCns].filter((cn) => !nextGroupCns.has(cn))
+
+      const changedGroupCns = Array.from(new Set([...add, ...remove].filter(Boolean)))
 
       const openmdCns = (user.memberOf || [])
         .map((dn) => dnToCn(dn))
         .filter((cn) => typeof cn === "string" && /^openmd_/i.test(cn))
       const openmdChanged = changedGroupCns.some((cn) => /^openmd_/i.test(cn))
 
-      for (const groupDn of add) {
+      for (const groupCn of add) {
         const r = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(user.uid)}/groups?skipSync=1`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ groupCn: dnToCn(groupDn) }),
+          body: JSON.stringify({ groupCn }),
         })
         if (!r.ok) {
           if (r.status === 503 && r.json?.error === "ldap_unavailable") {
@@ -343,9 +342,9 @@ export default function UsersPage() {
           throw new Error(r.json?.error || `LDAP: HTTP ${r.status}`)
         }
       }
-      for (const groupDn of remove) {
+      for (const groupCn of remove) {
         const r = await fetchJsonWithTimeout(
-          `/api/users/${encodeURIComponent(user.uid)}/groups?groupCn=${encodeURIComponent(dnToCn(groupDn))}&skipSync=1`,
+          `/api/users/${encodeURIComponent(user.uid)}/groups?groupCn=${encodeURIComponent(groupCn)}&skipSync=1`,
           { method: "DELETE" },
         )
         if (!r.ok) {
