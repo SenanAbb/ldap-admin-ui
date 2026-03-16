@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthWithLdapFallback } from "@/lib/auth";
-import { Agent } from "undici";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,7 +13,6 @@ type JsonPatchOp = {
 
 const OPENMETADATA_API_URL = process.env.OPENMETADATA_API_URL ?? "";
 const OPENMETADATA_BOT_TOKEN = process.env.OPENMETADATA_BOT_TOKEN ?? "";
-const OPENMETADATA_TLS_INSECURE = (process.env.OPENMETADATA_TLS_INSECURE ?? "0") === "1";
 
 function requireEnv(name: string, value: string): string {
   if (!value) {
@@ -50,17 +48,11 @@ async function omFetch(path: string, init: RequestInit = {}) {
   headers.set("Accept", "application/json");
 
   try {
-    const dispatcher =
-      OPENMETADATA_TLS_INSECURE && /^https:/i.test(url)
-        ? new Agent({ connect: { rejectUnauthorized: false } })
-        : undefined;
-
     const res = await fetch(url, {
       ...init,
       headers,
       cache: "no-store",
-      ...(dispatcher ? { dispatcher } : null),
-    } as any);
+    });
     const json = await res.json().catch(() => ({}));
     return { ok: res.ok, status: res.status, json };
   } catch (error: any) {
