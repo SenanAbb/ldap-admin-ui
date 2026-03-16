@@ -444,6 +444,8 @@ export async function addUserToGroup(uid: string, groupCn: string): Promise<void
       if (
         message.toLowerCase().includes("type or value exists") ||
         message.toLowerCase().includes("entry already exists") ||
+        message.toLowerCase().includes("code: 0x14") ||
+        message.toLowerCase().includes("0x14") ||
         message.includes(" 20") ||
         message.includes(" 68")
       ) {
@@ -468,6 +470,8 @@ export async function addUserToGroup(uid: string, groupCn: string): Promise<void
       if (
         message.toLowerCase().includes("type or value exists") ||
         message.toLowerCase().includes("entry already exists") ||
+        message.toLowerCase().includes("code: 0x14") ||
+        message.toLowerCase().includes("0x14") ||
         message.toLowerCase().includes("object class violation") ||
         message.toLowerCase().includes("undefined attribute") ||
         message.includes(" 17") ||
