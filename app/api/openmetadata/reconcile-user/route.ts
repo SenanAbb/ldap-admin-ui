@@ -92,7 +92,7 @@ export async function POST(request: Request) {
     const openmdGroupCnsRaw = Array.isArray(body?.openmdGroupCns) ? body.openmdGroupCns : [];
     const openmdGroupCns = openmdGroupCnsRaw
       .filter((v: unknown): v is string => typeof v === "string")
-      .map((v) => v.trim())
+      .map((v: string) => v.trim())
       .filter(Boolean);
 
     if (!uid) {
