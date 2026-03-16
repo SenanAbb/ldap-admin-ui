@@ -26,7 +26,7 @@ interface UserDialogProps {
   onOpenChange: (open: boolean) => void;
   user: LDAPUser | null;
   groups: LDAPGroup[];
-  onSave: (input: { user: LDAPUser; password?: string }) => void;
+  onSave: (input: { user: LDAPUser; password?: string }) => void | Promise<void>;
 }
 
 export function UserDialog({
@@ -39,6 +39,9 @@ export function UserDialog({
   const [password, setPassword] = useState("");
   const [groupSearch, setGroupSearch] = useState("");
   const [groupError, setGroupError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"general" | "groups">("general");
   const [serviceFilter, setServiceFilter] = useState<
     "all" | "ambari" | "ranger" | "hue" | "zeppelin" | "grafana" | "openmd" | "airflow" | "other"
@@ -86,6 +89,10 @@ export function UserDialog({
     }
     setPassword("");
     setGroupSearch("");
+    setSaving(false);
+    setSaveMessage(null);
+    setSaveError(null);
+    setGroupError(null);
   }, [user, open]);
 
   const groupService = (
@@ -221,8 +228,13 @@ export function UserDialog({
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (saving) return;
+    setSaving(true);
+    setSaveMessage(null);
+    setSaveError(null);
 
     const newUser: LDAPUser = {
       dn: user?.dn || `uid=${formData.uid},ou=people,dc=larioja,dc=org`,
@@ -237,7 +249,14 @@ export function UserDialog({
       lastLogin: user?.lastLogin,
     };
 
-    onSave({ user: newUser, password: password || undefined });
+    try {
+      await onSave({ user: newUser, password: password || undefined });
+      setSaveMessage("Cambios guardados");
+    } catch (err: any) {
+      setSaveError(err?.message || "No se pudieron guardar los cambios");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const getGroupName = (groupDn: string) => {
@@ -361,6 +380,7 @@ export function UserDialog({
                     }
                     placeholder="Juan"
                     required
+                    disabled={saving}
                     className="bg-white shadow-sm"
                   />
                 </div>
@@ -374,6 +394,7 @@ export function UserDialog({
                     }
                     placeholder="García López"
                     required
+                    disabled={saving}
                     className="bg-white shadow-sm"
                   />
                 </div>
@@ -389,6 +410,7 @@ export function UserDialog({
                     placeholder="jgarcia"
                     required
                     disabled={!!user}
+                    aria-disabled={saving}
                     className="bg-white shadow-sm"
                   />
                 </div>
@@ -400,6 +422,7 @@ export function UserDialog({
                     value={formData.mail || ""}
                     onChange={(e) => handleInputChange("mail", e.target.value)}
                     placeholder="jgarcia@larioja.org"
+                    disabled={saving}
                     className="bg-white shadow-sm"
                   />
                 </div>
@@ -417,6 +440,7 @@ export function UserDialog({
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={user ? "(opcional)" : "(requerida)"}
                     required={!user}
+                    disabled={saving}
                     className="bg-white shadow-sm"
                   />
                 </div>
@@ -461,6 +485,7 @@ export function UserDialog({
                   value={groupSearch}
                   onChange={(e) => setGroupSearch(e.target.value)}
                   placeholder="Buscar..."
+                  disabled={saving}
                   className="h-8 bg-white"
                 />
                 <ScrollArea className="min-h-0 flex-1 rounded-md border bg-white">
@@ -495,6 +520,7 @@ export function UserDialog({
                                     : "flex cursor-pointer items-center justify-between rounded-md border p-2 hover:bg-accent hover:text-accent-foreground group"
                                 }
                                 onClick={() => {
+                                  if (saving) return
                                   if (isBlocked) {
                                     setGroupError(
                                       `Ya tienes un grupo asignado para ${serviceLabel[svcKey]}. Elimina el grupo actual antes de asignar otro.`,
@@ -520,6 +546,7 @@ export function UserDialog({
                                     size="icon"
                                     variant="ghost"
                                     className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                                    disabled={saving}
                                   >
                                     <span className="text-lg">+</span>
                                   </Button>
@@ -579,6 +606,7 @@ export function UserDialog({
                                     variant="ghost"
                                     className="h-6 w-6 text-muted-foreground hover:text-destructive"
                                     onClick={() => handleRemoveGroup(groupDn)}
+                                    disabled={saving}
                                   >
                                     <X className="h-4 w-4" />
                                   </Button>
@@ -601,15 +629,25 @@ export function UserDialog({
           </Tabs>
 
           <DialogFooter className="mt-6">
+            <div className="mr-auto flex min-w-0 items-center gap-2">
+              {saving ? (
+                <p className="text-xs text-muted-foreground">Guardando cambios...</p>
+              ) : saveError ? (
+                <p className="text-xs text-red-600">{saveError}</p>
+              ) : saveMessage ? (
+                <p className="text-xs text-emerald-600">{saveMessage}</p>
+              ) : null}
+            </div>
             <Button
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
+              disabled={saving}
             >
               Cancelar
             </Button>
-            <Button type="submit">
-              {user ? "Guardar Cambios" : "Crear Usuario"}
+            <Button type="submit" disabled={saving}>
+              {saving ? "Guardando..." : user ? "Guardar Cambios" : "Crear Usuario"}
             </Button>
           </DialogFooter>
         </form>

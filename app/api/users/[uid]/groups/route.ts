@@ -16,11 +16,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ uid
   try {
     const { uid } = await params;
     const { groupCn } = await request.json();
+    const { searchParams } = new URL(request.url);
+    const skipSync = searchParams.get("skipSync") === "1";
     await addUserToGroup(uid, groupCn);
     if (typeof groupCn === "string" && groupCn.toLowerCase().startsWith("ranger_")) {
       await markRangerUserForForceDelete(uid);
     }
-    await enqueueSyncFromGroupCn(groupCn);
+    if (!skipSync) {
+      await enqueueSyncFromGroupCn(groupCn);
+    }
     return NextResponse.json({ success: true });
   } catch (error: any) {
     if (isLdapUnavailableError(error)) {
@@ -45,6 +49,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ u
     const { uid } = await params;
     const { searchParams } = new URL(request.url);
     const groupCn = searchParams.get("groupCn");
+    const skipSync = searchParams.get("skipSync") === "1";
     if (!groupCn) {
       return NextResponse.json({ error: "groupCn is required" }, { status: 400 });
     }
@@ -52,7 +57,9 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ u
     if (groupCn.toLowerCase().startsWith("ranger_")) {
       await markRangerUserForForceDelete(uid);
     }
-    await enqueueSyncFromGroupCn(groupCn);
+    if (!skipSync) {
+      await enqueueSyncFromGroupCn(groupCn);
+    }
     return NextResponse.json({ success: true });
   } catch (error: any) {
     if (isLdapUnavailableError(error)) {

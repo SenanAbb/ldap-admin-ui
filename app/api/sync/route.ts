@@ -6,6 +6,8 @@ import {
   enqueueSync,
   enqueueSyncFromGroupCn,
   enqueueSyncFromGroupCnWithOptions,
+  inferTargetsFromGroupCn,
+  markHueGroupForSync,
 } from "@/lib/sync-queue";
 
 type SyncTarget = "ambari" | "ranger" | "hue";
@@ -28,6 +30,13 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({} as any));
     console.log("/api/sync body", body);
     const groupCn = typeof body?.groupCn === "string" ? body.groupCn : undefined;
+    const groupCnsRaw = Array.isArray(body?.groupCns) ? body.groupCns : undefined;
+    const groupCns = groupCnsRaw
+      ? groupCnsRaw
+          .filter((v: unknown): v is string => typeof v === "string")
+          .map((v: string) => v.trim())
+          .filter(Boolean)
+      : [];
     const rangerUsername = typeof body?.rangerUsername === "string" ? body.rangerUsername : undefined;
     const force = !!body?.force;
 
@@ -43,6 +52,26 @@ export async function POST(request: Request) {
         : await enqueueSyncFromGroupCn(groupCn);
       console.log("/api/sync enqueue from group", { groupCn, force, result });
       return NextResponse.json({ success: true, ...result, targets: "from_group", force });
+    }
+
+    if (groupCns.length) {
+      const targets = new Set<SyncTarget>();
+      for (const cn of groupCns) {
+        const inferred = inferTargetsFromGroupCn(cn);
+        for (const t of inferred) targets.add(t);
+        if (cn === "hue_admin" || cn === "hue_user" || cn.startsWith("hue_")) {
+          await markHueGroupForSync(cn);
+        }
+      }
+
+      const uniqueTargets = Array.from(targets);
+      if (!uniqueTargets.length) {
+        return NextResponse.json({ success: true, enqueued: false, targets: [] });
+      }
+
+      const result = await enqueueSync(uniqueTargets, { force });
+      console.log("/api/sync enqueue from groups", { groupCnsCount: groupCns.length, targets: uniqueTargets, force, result });
+      return NextResponse.json({ success: true, ...result, targets: uniqueTargets, groupCnsCount: groupCns.length, force });
     }
 
     const targetsRaw = Array.isArray(body?.targets) ? body.targets : [];

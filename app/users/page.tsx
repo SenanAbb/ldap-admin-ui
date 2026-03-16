@@ -172,8 +172,12 @@ export default function UsersPage() {
 
       const dnToCn = (dn: string) => dn.split(",")[0].replace(/^cn=/, "")
 
+      const changedGroupCns = Array.from(
+        new Set([...add, ...remove].map((dn) => dnToCn(dn)).filter(Boolean)),
+      )
+
       for (const groupDn of add) {
-        await fetch(`/api/users/${encodeURIComponent(user.uid)}/groups`, {
+        await fetch(`/api/users/${encodeURIComponent(user.uid)}/groups?skipSync=1`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ groupCn: dnToCn(groupDn) }),
@@ -181,9 +185,17 @@ export default function UsersPage() {
       }
       for (const groupDn of remove) {
         await fetch(
-          `/api/users/${encodeURIComponent(user.uid)}/groups?groupCn=${encodeURIComponent(dnToCn(groupDn))}`,
+          `/api/users/${encodeURIComponent(user.uid)}/groups?groupCn=${encodeURIComponent(dnToCn(groupDn))}&skipSync=1`,
           { method: "DELETE" },
         )
+      }
+
+      if (changedGroupCns.length) {
+        await fetch(`/api/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groupCns: changedGroupCns, force: true }),
+        })
       }
 
       setUsers((prev) =>
@@ -226,8 +238,6 @@ export default function UsersPage() {
 
       await loadData()
     }
-
-    setDialogOpen(false)
   }
 
   if (loading) {
