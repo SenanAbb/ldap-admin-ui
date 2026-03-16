@@ -90,6 +90,7 @@ async function waitForSyncCompletion(
   const requestedAt = options.requestedAt
   const baselineCycleId = typeof options.baselineCycleId === "number" ? options.baselineCycleId : undefined
   const start = Date.now()
+  let attempt = 0
 
   while (Date.now() - start < timeoutMs) {
     const status = await fetchSyncStatus()
