@@ -76,7 +76,9 @@ async function omFetch(path: string, init: RequestInit = {}) {
 }
 
 async function getUserByName(username: string): Promise<any> {
-  const r = await omFetch(`/api/v1/users/name/${encodeURIComponent(username)}?fields=roles`);
+  const r = await omFetch(
+    `/api/v1/users/name/${encodeURIComponent(username)}?fields=roles,teams,isAdmin`,
+  );
   if (!r.ok) {
     throw new Error(r.json?.message || `OpenMetadata: failed to read user ${username} (HTTP ${r.status})`);
   }
@@ -123,12 +125,20 @@ export async function POST(request: Request) {
     }
 
     const desiredRoleNames = mapOpenmdGroupsToRoleNames(openmdGroupCns);
+    const shouldBeAdmin = desiredRoleNames.includes("Admin");
 
     const user = await getUserByName(uid);
     const userId = user?.id;
     if (!userId) {
       throw new Error(`OpenMetadata: user has no id (${uid})`);
     }
+
+    const before = {
+      id: userId,
+      isAdmin: user?.isAdmin,
+      roles: Array.isArray(user?.roles) ? user.roles.map((r: any) => r?.name).filter(Boolean) : [],
+      teams: Array.isArray(user?.teams) ? user.teams.map((t: any) => t?.name).filter(Boolean) : [],
+    };
 
     const desiredRoles = [] as any[];
     for (const roleName of desiredRoleNames) {
@@ -137,6 +147,9 @@ export async function POST(request: Request) {
     }
 
     const patch: JsonPatchOp[] = [{ op: "replace", path: "/roles", value: desiredRoles }];
+    if (Object.prototype.hasOwnProperty.call(user, "isAdmin")) {
+      patch.push({ op: "replace", path: "/isAdmin", value: shouldBeAdmin });
+    }
 
     const patchRes = await omFetch(`/api/v1/users/${encodeURIComponent(String(userId))}`, {
       method: "PATCH",
@@ -152,7 +165,15 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, uid, desiredRoleNames });
+    const updated = await getUserByName(uid);
+    const after = {
+      id: updated?.id,
+      isAdmin: updated?.isAdmin,
+      roles: Array.isArray(updated?.roles) ? updated.roles.map((r: any) => r?.name).filter(Boolean) : [],
+      teams: Array.isArray(updated?.teams) ? updated.teams.map((t: any) => t?.name).filter(Boolean) : [],
+    };
+
+    return NextResponse.json({ success: true, uid, desiredRoleNames, before, after });
   } catch (error: any) {
     return NextResponse.json(
       {
