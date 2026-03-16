@@ -154,7 +154,7 @@ export async function POST(request: Request) {
     }
 
     const desiredRoleNames = mapOpenmdGroupsToRoleNames(openmdGroupCns);
-    const shouldBeAdmin = openmdGroupCns.some((g) => g.trim().toLowerCase() === "openmd_admin");
+    const shouldBeAdmin = openmdGroupCns.some((g: string) => g.trim().toLowerCase() === "openmd_admin");
 
     const user = await getUserByName(uid);
     const userId = user?.id;
