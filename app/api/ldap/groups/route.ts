@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { fetchGroups } from "@/lib/ldap";
+import { fetchGroupsRaw } from "@/lib/ldap";
 import { resolveAuthWithLdapFallback } from "@/lib/auth";
 import { isLdapUnavailableError } from "@/lib/ldap";
 
@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const groups = await fetchGroups();
+    const groups = await fetchGroupsRaw();
     return NextResponse.json({ groups });
   } catch (error) {
     if (isLdapUnavailableError(error)) {

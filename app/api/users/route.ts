@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthWithLdapFallback } from "@/lib/auth";
-import { createUser, fetchUsers, isLdapUnavailableError } from "@/lib/ldap";
+import { createUser, fetchUsersRaw, isLdapUnavailableError } from "@/lib/ldap";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const users = await fetchUsers();
+    const users = await fetchUsersRaw();
     return NextResponse.json({ users });
   } catch (error) {
     if (isLdapUnavailableError(error)) {

@@ -73,7 +73,7 @@ export function inferTargetsFromGroupCn(groupCn: string): SyncTarget[] {
 export async function enqueueSync(
   targets: SyncTarget[],
   options?: { force?: boolean },
-): Promise<{ enqueued: boolean }> {
+): Promise<{ enqueued: boolean; requestedAt?: number }> {
   const uniqueTargets = Array.from(new Set(targets));
   if (!uniqueTargets.length) {
     return { enqueued: false };
@@ -112,7 +112,7 @@ export async function enqueueSync(
     await client.set(KEY_DEBOUNCE_UNTIL, String(now + SYNC_DEBOUNCE_SECONDS * 1000));
   }
 
-  return { enqueued: true };
+  return { enqueued: true, requestedAt: now };
 }
 
 export async function enqueueRangerUserResync(

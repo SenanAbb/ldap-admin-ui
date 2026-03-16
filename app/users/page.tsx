@@ -16,9 +16,11 @@ const ITEMS_PER_PAGE = 12
 
 type SyncStatusPayload = {
   state: "queued" | "running" | "success" | "error"
+  requestedAt?: number
   cycleId?: number
   startedAt?: number
   finishedAt?: number | null
+  targets?: unknown
   services?: Record<
     string,
     {
@@ -61,21 +63,54 @@ function formatSyncStatusError(status: SyncStatusPayload | null): string {
   return parts.length ? `Sincronización con errores (${parts.join(" | ")})` : "Sincronización con errores"
 }
 
-async function waitForSyncCompletion(options: { timeoutMs?: number; pollMs?: number } = {}) {
+async function fetchSyncStatus(): Promise<SyncStatusPayload | null> {
+  const r = await fetchJsonWithTimeout("/api/sync/status", { cache: "no-store", timeoutMs: 8_000 })
+  if (!r.ok) {
+    throw new Error(`SYNC: no se pudo leer el estado de sync (${r.json?.error || `HTTP ${r.status}`})`)
+  }
+  return (r.json?.status ?? null) as SyncStatusPayload | null
+}
+
+function isStatusFromThisEnqueue(status: SyncStatusPayload, requestedAt: number): boolean {
+  const slackMs = 2_000
+  if (status.state === "queued") {
+    const t = typeof status.requestedAt === "number" ? status.requestedAt : 0
+    return t >= requestedAt - slackMs
+  }
+  const t = typeof status.startedAt === "number" ? status.startedAt : 0
+  return t >= requestedAt - slackMs
+}
+
+async function waitForSyncCompletion(
+  options: { timeoutMs?: number; pollMs?: number; requestedAt: number; baselineCycleId?: number },
+) {
   const timeoutMs = options.timeoutMs ?? 180_000
   const pollMs = options.pollMs ?? 1_500
+  const requestedAt = options.requestedAt
+  const baselineCycleId = typeof options.baselineCycleId === "number" ? options.baselineCycleId : undefined
   const start = Date.now()
 
   while (Date.now() - start < timeoutMs) {
-    const r = await fetchJsonWithTimeout("/api/sync/status", { cache: "no-store", timeoutMs: 8_000 })
-    if (!r.ok) {
-      throw new Error(`SYNC: no se pudo leer el estado de sync (${r.json?.error || `HTTP ${r.status}`})`)
-    }
-    const status = (r.json?.status ?? null) as SyncStatusPayload | null
+    const status = await fetchSyncStatus()
     if (!status) {
       await new Promise((resolve) => window.setTimeout(resolve, pollMs))
       continue
     }
+
+    // Avoid returning early because a previous cycle already finished.
+    if (!isStatusFromThisEnqueue(status, requestedAt)) {
+      await new Promise((resolve) => window.setTimeout(resolve, pollMs))
+      continue
+    }
+
+    if (baselineCycleId !== undefined && status.state !== "queued") {
+      const currentCycleId = typeof status.cycleId === "number" ? status.cycleId : undefined
+      if (currentCycleId !== undefined && currentCycleId <= baselineCycleId) {
+        await new Promise((resolve) => window.setTimeout(resolve, pollMs))
+        continue
+      }
+    }
+
     if (status.state === "success") return
     if (status.state === "error") {
       throw new Error(`SYNC: ${formatSyncStatusError(status)}`)
@@ -84,6 +119,41 @@ async function waitForSyncCompletion(options: { timeoutMs?: number; pollMs?: num
   }
 
   throw new Error("SYNC: timeout esperando al worker de sincronización")
+}
+
+async function waitForUserGroupsApplied(
+  uid: string,
+  expectedGroupDns: string[],
+  options: { timeoutMs?: number; pollMs?: number } = {},
+) {
+  const timeoutMs = options.timeoutMs ?? 20_000
+  const pollMs = options.pollMs ?? 750
+  const expected = new Set((expectedGroupDns || []).filter(Boolean))
+  const start = Date.now()
+
+  while (Date.now() - start < timeoutMs) {
+    const r = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(uid)}`, { timeoutMs: 10_000, cache: "no-store" })
+    if (r.ok) {
+      const groups = Array.isArray(r.json?.groups) ? (r.json.groups as unknown[]) : []
+      const actual = new Set(groups.filter((g): g is string => typeof g === "string" && !!g))
+      let same = actual.size === expected.size
+      if (same) {
+        for (const g of expected) {
+          if (!actual.has(g)) {
+            same = false
+            break
+          }
+        }
+      }
+      if (same) return
+    } else if (r.status === 503 && r.json?.error === "ldap_unavailable") {
+      throw new Error("LDAP: servicio no disponible")
+    }
+
+    await new Promise((resolve) => window.setTimeout(resolve, pollMs))
+  }
+
+  throw new Error("LDAP: timeout esperando a que se materialicen los cambios")
 }
 
 type UsersApiUser = {
@@ -125,9 +195,9 @@ export default function UsersPage() {
     setLoading(true)
     try {
       const [usersRes, groupsRes, kpisRes] = await Promise.all([
-        fetch("/api/users"),
-        fetch("/api/ldap/groups"),
-        fetch("/api/ldap/kpis"),
+        fetch("/api/users", { cache: "no-store" }),
+        fetch("/api/ldap/groups", { cache: "no-store" }),
+        fetch("/api/ldap/kpis", { cache: "no-store" }),
       ])
       const usersJson = await usersRes.json()
       const groupsJson = await groupsRes.json()
@@ -281,6 +351,9 @@ export default function UsersPage() {
       }
 
       if (changedGroupCns.length) {
+        const baseline = await fetchSyncStatus().catch(() => null)
+        const baselineCycleId = typeof baseline?.cycleId === "number" ? baseline.cycleId : undefined
+        const requestedAtFallback = Date.now()
         const syncRes = await fetchJsonWithTimeout(`/api/sync`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -290,9 +363,13 @@ export default function UsersPage() {
           throw new Error(syncRes.json?.error ? `SYNC: ${syncRes.json.error}` : `SYNC: HTTP ${syncRes.status}`)
         }
         if (syncRes.json?.enqueued) {
-          await waitForSyncCompletion()
+          const requestedAt =
+            typeof syncRes.json?.requestedAt === "number" ? syncRes.json.requestedAt : requestedAtFallback
+          await waitForSyncCompletion({ requestedAt, baselineCycleId })
         }
       }
+
+      await waitForUserGroupsApplied(user.uid, user.memberOf || [])
 
       setUsers((prev) =>
         prev.map((u) =>
@@ -346,6 +423,9 @@ export default function UsersPage() {
       }
 
       if (changedGroupCns.length) {
+        const baseline = await fetchSyncStatus().catch(() => null)
+        const baselineCycleId = typeof baseline?.cycleId === "number" ? baseline.cycleId : undefined
+        const requestedAtFallback = Date.now()
         const syncRes = await fetchJsonWithTimeout(`/api/sync`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -355,9 +435,12 @@ export default function UsersPage() {
           throw new Error(syncRes.json?.error ? `SYNC: ${syncRes.json.error}` : `SYNC: HTTP ${syncRes.status}`)
         }
         if (syncRes.json?.enqueued) {
-          await waitForSyncCompletion()
+          const requestedAt = typeof syncRes.json?.requestedAt === "number" ? syncRes.json.requestedAt : requestedAtFallback
+          await waitForSyncCompletion({ requestedAt, baselineCycleId })
         }
       }
+
+      await waitForUserGroupsApplied(user.uid, user.memberOf || [])
 
       await loadData()
     }

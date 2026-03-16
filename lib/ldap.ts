@@ -143,12 +143,12 @@ export type LdapGroup = {
 
 const cacheTtl = Number(process.env.LDAP_CACHE_TTL ?? "60");
 
-async function fetchUsersRaw(): Promise<LdapUser[]> {
+export async function fetchUsersRaw(): Promise<LdapUser[]> {
   return withClient(async (client) => {
     const { searchEntries } = await client.search(LDAP_PEOPLE_DN_BASE, {
       scope: "sub",
       filter: "(objectClass=inetOrgPerson)",
-      attributes: ["uid", "cn", "givenName", "sn", "mail"],
+      attributes: ["dn", "uid", "cn", "sn", "givenName", "mail", "employeeNumber"],
     });
 
     const entries = searchEntries as LdapEntry[];
@@ -170,12 +170,12 @@ async function fetchUsersRaw(): Promise<LdapUser[]> {
   });
 }
 
-async function fetchGroupsRaw(): Promise<LdapGroup[]> {
+export async function fetchGroupsRaw(): Promise<LdapGroup[]> {
   return withClient(async (client) => {
     const { searchEntries } = await client.search(LDAP_GROUPS_DN_BASE, {
       scope: "sub",
-      filter: "(|(objectClass=groupOfNames)(objectClass=posixGroup))",
-      attributes: ["cn", "description", "member", "memberUid"],
+      filter: "(|(objectClass=posixGroup)(objectClass=groupOfNames))",
+      attributes: ["dn", "cn", "description", "member", "memberUid"],
     });
 
     const entries = searchEntries as LdapEntry[];
