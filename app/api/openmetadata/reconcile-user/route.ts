@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveAuthWithLdapFallback } from "@/lib/auth";
+import { Agent } from "undici";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,6 +14,7 @@ type JsonPatchOp = {
 
 const OPENMETADATA_API_URL = process.env.OPENMETADATA_API_URL ?? "";
 const OPENMETADATA_BOT_TOKEN = process.env.OPENMETADATA_BOT_TOKEN ?? "";
+const OPENMETADATA_TLS_INSECURE = (process.env.OPENMETADATA_TLS_INSECURE ?? "0") === "1";
 
 function requireEnv(name: string, value: string): string {
   if (!value) {
@@ -47,9 +49,38 @@ async function omFetch(path: string, init: RequestInit = {}) {
   headers.set("Authorization", `Bearer ${token}`);
   headers.set("Accept", "application/json");
 
-  const res = await fetch(url, { ...init, headers, cache: "no-store" });
-  const json = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, json };
+  try {
+    const dispatcher =
+      OPENMETADATA_TLS_INSECURE && /^https:/i.test(url)
+        ? new Agent({ connect: { rejectUnauthorized: false } })
+        : undefined;
+
+    const res = await fetch(url, {
+      ...init,
+      headers,
+      cache: "no-store",
+      ...(dispatcher ? { dispatcher } : null),
+    } as any);
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, json };
+  } catch (error: any) {
+    const meta = {
+      message: String(error?.message ?? error),
+      name: String(error?.name ?? ""),
+      code: String(error?.code ?? ""),
+      cause: error?.cause
+        ? {
+            message: String(error.cause?.message ?? error.cause),
+            name: String(error.cause?.name ?? ""),
+            code: String(error.cause?.code ?? ""),
+          }
+        : undefined,
+    };
+    const e = new Error(`OpenMetadata fetch failed: ${meta.message}`);
+    // @ts-ignore
+    e.meta = meta;
+    throw e;
+  }
 }
 
 async function getUserByName(username: string): Promise<any> {
@@ -134,6 +165,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error: error?.message || "openmetadata_reconcile_failed",
+        meta: error?.meta,
       },
       { status: 500 },
     );
