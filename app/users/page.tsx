@@ -116,7 +116,9 @@ async function waitForSyncCompletion(
     if (status.state === "error") {
       throw new Error(`SYNC: ${formatSyncStatusError(status)}`)
     }
-    await new Promise((resolve) => window.setTimeout(resolve, pollMs))
+    attempt += 1
+    const backoff = Math.min(3_000, pollMs + attempt * 150)
+    await new Promise((resolve) => window.setTimeout(resolve, backoff))
   }
 
   throw new Error("SYNC: timeout esperando al worker de sincronización")
@@ -129,14 +131,22 @@ async function waitForUserGroupsApplied(
 ) {
   const timeoutMs = options.timeoutMs ?? 20_000
   const pollMs = options.pollMs ?? 750
-  const expected = new Set((expectedGroupDns || []).filter(Boolean))
+  const toCn = (v: string) => (v.split(",")[0] || "").replace(/^cn=/i, "").trim()
+  const normalize = (v: string) => v.trim().toLowerCase()
+  const expected = new Set((expectedGroupDns || []).map((g) => normalize(toCn(g))).filter(Boolean))
   const start = Date.now()
+  let attempt = 0
 
   while (Date.now() - start < timeoutMs) {
     const r = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(uid)}`, { timeoutMs: 10_000, cache: "no-store" })
     if (r.ok) {
       const groups = Array.isArray(r.json?.groups) ? (r.json.groups as unknown[]) : []
-      const actual = new Set(groups.filter((g): g is string => typeof g === "string" && !!g))
+      const actual = new Set(
+        groups
+          .filter((g): g is string => typeof g === "string" && !!g)
+          .map((g) => normalize(toCn(g)))
+          .filter(Boolean),
+      )
       let same = actual.size === expected.size
       if (same) {
         for (const g of expected) {
