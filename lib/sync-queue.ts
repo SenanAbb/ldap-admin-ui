@@ -10,6 +10,7 @@ type RedisConfig = {
 
 const REDIS_URL = process.env.SYNC_REDIS_URL ?? process.env.REDIS_URL ?? "redis://redis:6379";
 const SYNC_DEBOUNCE_SECONDS = Number(process.env.SYNC_DEBOUNCE_SECONDS ?? "60");
+const DIRTY_KEY_TTL_SECONDS = Number(process.env.SYNC_DIRTY_TTL_SECONDS ?? "86400");
 
 export const KEY_DIRTY_AMBARI = "sync:dirty:ambari";
 export const KEY_DIRTY_RANGER = "sync:dirty:ranger";
@@ -88,12 +89,15 @@ export async function enqueueSync(
 
   if (uniqueTargets.includes("ambari")) {
     await client.set(KEY_DIRTY_AMBARI, "1");
+    if (DIRTY_KEY_TTL_SECONDS > 0) await client.expire(KEY_DIRTY_AMBARI, DIRTY_KEY_TTL_SECONDS);
   }
   if (uniqueTargets.includes("ranger")) {
     await client.set(KEY_DIRTY_RANGER, "1");
+    if (DIRTY_KEY_TTL_SECONDS > 0) await client.expire(KEY_DIRTY_RANGER, DIRTY_KEY_TTL_SECONDS);
   }
   if (uniqueTargets.includes("hue")) {
     await client.set(KEY_DIRTY_HUE, "1");
+    if (DIRTY_KEY_TTL_SECONDS > 0) await client.expire(KEY_DIRTY_HUE, DIRTY_KEY_TTL_SECONDS);
   }
 
   await client.set(
@@ -147,6 +151,7 @@ export async function markHueGroupForSync(groupCn: string): Promise<{ marked: bo
 
   const client = await getRedisClient({ url: REDIS_URL });
   await client.sAdd(KEY_HUE_DIRTY_GROUPS, cn);
+  if (DIRTY_KEY_TTL_SECONDS > 0) await client.expire(KEY_HUE_DIRTY_GROUPS, DIRTY_KEY_TTL_SECONDS);
   return { marked: true };
 }
 
