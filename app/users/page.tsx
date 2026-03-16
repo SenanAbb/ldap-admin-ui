@@ -325,6 +325,11 @@ export default function UsersPage() {
         new Set([...add, ...remove].map((dn) => dnToCn(dn)).filter(Boolean)),
       )
 
+      const openmdCns = (user.memberOf || [])
+        .map((dn) => dnToCn(dn))
+        .filter((cn) => typeof cn === "string" && /^openmd_/i.test(cn))
+      const openmdChanged = changedGroupCns.some((cn) => /^openmd_/i.test(cn))
+
       for (const groupDn of add) {
         const r = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(user.uid)}/groups?skipSync=1`, {
           method: "POST",
@@ -372,6 +377,18 @@ export default function UsersPage() {
 
       await waitForUserGroupsApplied(user.uid, user.memberOf || [])
 
+      if (openmdChanged || openmdCns.length) {
+        const omRes = await fetchJsonWithTimeout("/api/openmetadata/reconcile-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uid: user.uid, openmdGroupCns: openmdCns }),
+          timeoutMs: 20_000,
+        })
+        if (!omRes.ok || !omRes.json?.success) {
+          throw new Error(omRes.json?.error ? `OpenMetadata: ${omRes.json.error}` : `OpenMetadata: HTTP ${omRes.status}`)
+        }
+      }
+
       setUsers((prev) =>
         prev.map((u) =>
           u.uid === user.uid
@@ -409,6 +426,10 @@ export default function UsersPage() {
 
       const dnToCn = (dn: string) => dn.split(",")[0].replace(/^cn=/, "")
       const changedGroupCns = Array.from(new Set((user.memberOf || []).map((dn) => dnToCn(dn)).filter(Boolean)))
+
+      const openmdCns = (user.memberOf || [])
+        .map((dn) => dnToCn(dn))
+        .filter((cn) => typeof cn === "string" && /^openmd_/i.test(cn))
       for (const groupDn of user.memberOf || []) {
         const r = await fetchJsonWithTimeout(`/api/users/${encodeURIComponent(user.uid)}/groups?skipSync=1`, {
           method: "POST",
@@ -442,6 +463,18 @@ export default function UsersPage() {
       }
 
       await waitForUserGroupsApplied(user.uid, user.memberOf || [])
+
+      if (openmdCns.length) {
+        const omRes = await fetchJsonWithTimeout("/api/openmetadata/reconcile-user", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uid: user.uid, openmdGroupCns: openmdCns }),
+          timeoutMs: 20_000,
+        })
+        if (!omRes.ok || !omRes.json?.success) {
+          throw new Error(omRes.json?.error ? `OpenMetadata: ${omRes.json.error}` : `OpenMetadata: HTTP ${omRes.status}`)
+        }
+      }
 
       await loadData()
     }
