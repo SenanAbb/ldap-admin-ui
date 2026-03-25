@@ -199,13 +199,84 @@ export function SyncSidebarControls() {
     return null;
   }, [phase, loading, syncStatus, message]);
 
+  const getServiceErrorMessage = (service: string, error: any): string => {
+    const serviceNames: Record<string, string> = {
+      ambari: "Ambari",
+      ranger: "Ranger",
+      hue: "Hue",
+    };
+    const name = serviceNames[service] || service;
+
+    if (!error) {
+      return `Error en la sincronización con ${name}`;
+    }
+
+    const message = String(error?.message || "").toLowerCase();
+    const stderr = String(error?.stderr || "").toLowerCase();
+    const stdout = String(error?.stdout || "").toLowerCase();
+    const fullText = `${message} ${stderr} ${stdout}`;
+
+    // Ambari-specific errors
+    if (service === "ambari") {
+      if (fullText.includes("connection refused") || fullText.includes("econnrefused")) {
+        return "No se pudo conectar con Ambari. Verifique que el servidor esté disponible.";
+      }
+      if (fullText.includes("timeout") || fullText.includes("etimedout")) {
+        return "Timeout al conectar con Ambari. Verifique la conectividad de red.";
+      }
+      if (fullText.includes("authentication") || fullText.includes("password")) {
+        return "Error de autenticación con Ambari. Verifique las credenciales.";
+      }
+      if (fullText.includes("permission denied")) {
+        return "Permiso denegado en Ambari. Verifique los permisos del usuario de sincronización.";
+      }
+      return "Error en la sincronización con Ambari. Revise los logs del servidor.";
+    }
+
+    // Ranger-specific errors
+    if (service === "ranger") {
+      if (fullText.includes("connection refused") || fullText.includes("econnrefused")) {
+        return "No se pudo conectar con Ranger. Verifique que el servidor esté disponible.";
+      }
+      if (fullText.includes("timeout") || fullText.includes("etimedout")) {
+        return "Timeout al conectar con Ranger. Verifique la conectividad de red.";
+      }
+      if (fullText.includes("did not report running")) {
+        return "El servicio Ranger UserSync no se inició correctamente. Revise los logs.";
+      }
+      if (fullText.includes("permission denied")) {
+        return "Permiso denegado en Ranger. Verifique los permisos del usuario de sincronización.";
+      }
+      return "Error en la sincronización con Ranger. Revise los logs del servidor.";
+    }
+
+    // Hue-specific errors
+    if (service === "hue") {
+      if (fullText.includes("connection refused") || fullText.includes("econnrefused")) {
+        return "No se pudo conectar con Hue. Verifique que el servidor esté disponible.";
+      }
+      if (fullText.includes("timeout") || fullText.includes("etimedout")) {
+        return "Timeout al conectar con Hue. Verifique la conectividad de red.";
+      }
+      if (fullText.includes("permission denied")) {
+        return "Permiso denegado en Hue. Verifique los permisos del usuario de sincronización.";
+      }
+      if (fullText.includes("django") || fullText.includes("python")) {
+        return "Error en la aplicación Hue. Revise los logs del servidor.";
+      }
+      return "Error en la sincronización con Hue. Revise los logs del servidor.";
+    }
+
+    return `Error en la sincronización con ${name}`;
+  };
+
   const serviceErrors = useMemo(() => {
     const s = syncStatus?.services;
     if (!s || syncStatus?.state !== "error") return [] as Array<{ key: string; message: string }>;
     const out: Array<{ key: string; message: string }> = [];
     for (const [key, v] of Object.entries(s)) {
       if (v?.state !== "error") continue;
-      const msg = v?.error?.message || "Error desconocido";
+      const msg = getServiceErrorMessage(key, v?.error);
       out.push({ key, message: msg });
     }
     return out;
